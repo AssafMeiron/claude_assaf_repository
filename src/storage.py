@@ -149,9 +149,43 @@ class Storage:
 
         return summary
 
-    def get_monthly_summary(self, year: int, month: int) -> Dict:
+    def _is_credit_card_transfer(self, transaction: Transaction) -> bool:
+        """
+        Check if a bank transaction is a credit card payment.
+        These should be excluded from expense totals when credit card
+        statements are also imported (to avoid double-counting).
+        """
+        if transaction.source != 'bank':
+            return False
+
+        # Common credit card company names in bank statements
+        cc_keywords = [
+            'ישראכרט',
+            'מקס איט',
+            'כאל',
+            'לאומי קארד',
+            'אמריקן אקספרס',
+            'דיינרס',
+            'visa cal',
+            'mastercard',
+        ]
+
+        desc_lower = transaction.description.lower()
+        for keyword in cc_keywords:
+            if keyword in desc_lower or keyword.lower() in desc_lower:
+                return True
+
+        return False
+
+    def get_monthly_summary(self, year: int, month: int, exclude_cc_transfers: bool = True) -> Dict:
         """
         Get detailed monthly summary.
+
+        Args:
+            year: Year to summarize
+            month: Month to summarize
+            exclude_cc_transfers: If True, exclude credit card payments from bank
+                                  statements to avoid double-counting with CC statements
         """
         start_date = datetime(year, month, 1)
         if month == 12:
@@ -161,10 +195,21 @@ class Storage:
 
         transactions = self.get_transactions(start_date=start_date, end_date=end_date)
 
-        # Separate income and expenses
+        # Check if we have both bank and credit card data
+        has_bank = any(t.source == 'bank' for t in transactions)
+        has_cc = any(t.source == 'credit_card' for t in transactions)
+
+        # Separate income, expenses, and excluded transfers
         income = []
         expenses = []
+        excluded_transfers = []
+
         for t in transactions:
+            # Exclude credit card transfers from bank if we have CC data
+            if exclude_cc_transfers and has_bank and has_cc and self._is_credit_card_transfer(t):
+                excluded_transfers.append(t)
+                continue
+
             if t.amount > 0:
                 income.append(t)
             else:
@@ -189,6 +234,7 @@ class Storage:
 
         total_expenses = sum(abs(t.amount) for t in expenses)
         total_income = sum(t.amount for t in income)
+        total_excluded = sum(abs(t.amount) for t in excluded_transfers)
 
         return {
             'year': year,
@@ -198,7 +244,9 @@ class Storage:
             'balance': total_income - total_expenses,
             'expense_by_category': expense_by_category,
             'income_by_category': income_by_category,
-            'transaction_count': len(transactions)
+            'transaction_count': len(transactions),
+            'excluded_cc_transfers': excluded_transfers,
+            'total_excluded': total_excluded
         }
 
     def clear_all(self):

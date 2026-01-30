@@ -44,6 +44,16 @@ def print_cli_report(summary: Dict, categorizer: Categorizer = None):
     print(f"  {'מאזן / Balance:':<30} {format_currency(summary['balance']):>15}")
     print(f"  {'מספר תנועות / Transactions:':<30} {summary['transaction_count']:>15}")
 
+    # Show excluded credit card transfers if any
+    excluded = summary.get('excluded_cc_transfers', [])
+    if excluded:
+        total_excluded = summary.get('total_excluded', 0)
+        print(f"\n  {'העברות כ.א שהוחרגו / Excluded CC transfers:':<30}")
+        print(f"  (מופיעות גם בפירוט כרטיס האשראי / Already in CC statement)")
+        for t in excluded:
+            print(f"    {t.date.strftime('%Y-%m-%d')} {t.description[:25]:<25} {format_currency(abs(t.amount)):>12}")
+        print(f"  {'סה״כ הוחרג / Total excluded:':<30} {format_currency(total_excluded):>15}")
+
     # Expenses by category
     print(f"\n  הוצאות לפי קטגוריה / Expenses by Category")
     print(f"  {'-' * 60}")
