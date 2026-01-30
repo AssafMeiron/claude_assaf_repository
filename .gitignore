@@ -1,0 +1,28 @@
+# Personal financial data - do not commit!
+data/transactions.json
+data/processed_files.json
+
+# Generated reports
+reports/*.csv
+reports/*.pdf
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+*.egg
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db

@@ -1,0 +1,6 @@
+{
+  "_comment": "Manual category overrides. Key is the business name (exact or partial match), value is the category key.",
+  "overrides": {
+    "תמר זמיר": "ילדים"
+  }
+}
