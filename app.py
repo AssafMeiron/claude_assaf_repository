@@ -1,58 +1,156 @@
 """
-Finance Monitoring Tool - Web App
-Run with: streamlit run app.py
+Finance Monitoring Tool v2 - Modern Web App
+Features:
+- Google Sheets storage for persistence
+- Multi-month tracking & trend analysis
+- Multiple credit cards (Assaf + Tehila)
+- Per-transaction category editing
+- One-time/special expense exclusion
+- Modern UI
 """
 
 import streamlit as st
 import pandas as pd
 from datetime import datetime
-import re
+import plotly.express as px
+import plotly.graph_objects as go
+from streamlit_gsheets import GSheetsConnection
 import json
 
-# Page config
+# =============================================================================
+# Page Config & Styling
+# =============================================================================
 st.set_page_config(
-    page_title="Finance Monitor",
+    page_title="💰 Finance Monitor",
     page_icon="💰",
-    layout="wide"
+    layout="wide",
+    initial_sidebar_state="expanded"
 )
 
-# Categories with keywords
+# Custom CSS for modern look
+st.markdown("""
+<style>
+    /* Main background */
+    .stApp {
+        background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+    }
+
+    /* Cards */
+    .metric-card {
+        background: linear-gradient(135deg, #0f3460 0%, #1a1a2e 100%);
+        border-radius: 16px;
+        padding: 20px;
+        border: 1px solid #e94560;
+        box-shadow: 0 4px 15px rgba(233, 69, 96, 0.2);
+    }
+
+    /* Headers */
+    h1, h2, h3 {
+        color: #e94560 !important;
+    }
+
+    /* Metric values */
+    [data-testid="stMetricValue"] {
+        font-size: 2rem !important;
+        color: #00d9ff !important;
+    }
+
+    /* Sidebar */
+    [data-testid="stSidebar"] {
+        background: linear-gradient(180deg, #1a1a2e 0%, #0f3460 100%);
+    }
+
+    /* Buttons */
+    .stButton > button {
+        background: linear-gradient(90deg, #e94560 0%, #0f3460 100%);
+        color: white;
+        border: none;
+        border-radius: 10px;
+        padding: 10px 25px;
+        font-weight: bold;
+    }
+
+    .stButton > button:hover {
+        background: linear-gradient(90deg, #0f3460 0%, #e94560 100%);
+        transform: scale(1.02);
+    }
+
+    /* Tables */
+    .dataframe {
+        border-radius: 10px !important;
+    }
+
+    /* Tabs */
+    .stTabs [data-baseweb="tab-list"] {
+        gap: 8px;
+    }
+
+    .stTabs [data-baseweb="tab"] {
+        background-color: #0f3460;
+        border-radius: 10px;
+        color: white;
+        padding: 10px 20px;
+    }
+
+    .stTabs [aria-selected="true"] {
+        background-color: #e94560 !important;
+    }
+</style>
+""", unsafe_allow_html=True)
+
+# =============================================================================
+# Categories Configuration
+# =============================================================================
 CATEGORIES = {
-    "משכנתא": {"name": "משכנתא", "name_en": "Mortgage", "keywords": ["משכנתא", "פועלים-משכנתא"]},
-    "ועד_בית": {"name": "ועד בית", "name_en": "HOA", "keywords": ["ועד בית", "עזרא הסופר"]},
-    "ביטוחים": {"name": "ביטוחים", "name_en": "Insurance", "keywords": ["הראל", "מגדל", "כלל", "ביטוח", "פניקס", "מנורה", "קרן מכבי"]},
-    "חשמל": {"name": "חשמל", "name_en": "Electricity", "keywords": ["חברת חשמל", "חשמל"]},
-    "מים": {"name": "מים", "name_en": "Water", "keywords": ["מי ", "מים", "מקורות"]},
-    "סופרמרקט": {"name": "סופרמרקט", "name_en": "Supermarket", "keywords": ["רמי לוי", "שופרסל", "יוחננוף", "מגה", "ויקטורי", "סופר", "המרכולית", "קטיף עצמי", "אושר עד"]},
-    "מסעדות": {"name": "מסעדות", "name_en": "Restaurants", "keywords": ["מסעדה", "קפה", "פיצה", "מקדונלד", "בורגר", "שווארמה", "לחמנינה", "ארקפה", "מוניציפל", "נונומימי"]},
-    "רכב_ודלק": {"name": "רכב ודלק", "name_en": "Car & Fuel", "keywords": ["דלק", "סונול", "פז", "דור אלון", "yellow", "רכב", "מנטה", "ten"]},
-    "ילדים": {"name": "ילדים", "name_en": "Kids", "keywords": ["צעצוע", "toys", "ילדים", "בייבי", "תמר זמיר"]},
-    "ספורט": {"name": "ספורט", "name_en": "Sports", "keywords": ["ספורט", "כושר", "gym", "חדר כושר"]},
-    "פארמה": {"name": "פארמה", "name_en": "Pharmacy", "keywords": ["סופר פארם", "פארם", "בית מרקחת"]},
-    "תרומה": {"name": "תרומה", "name_en": "Donations", "keywords": ["תרומה", "צדקה", "עמותה", "מפלגת המילואימניקים"]},
-    "תוכנות": {"name": "תוכנות", "name_en": "Software", "keywords": ["GOOGLE", "APPLE", "NETFLIX", "SPOTIFY", "AMAZON", "MICROSOFT", "CLAUDE"]},
-    "אטט": {"name": "א.ט.ט", "name_en": "Internet/TV/Phone", "keywords": ["בזק", "הוט", "פרטנר", "סלקום", "גולן"]},
-    "תחבורה": {"name": "תחבורה", "name_en": "Transportation", "keywords": ["רכבת ישראל", "אגד", "דן", "מטרופולין"]},
-    "קניות": {"name": "קניות", "name_en": "Shopping", "keywords": ["איקאה", "זארה", "H&M", "קניון", "ביג", "עזריאלי", "סוהו"]},
-    "בילויים": {"name": "בילויים", "name_en": "Entertainment", "keywords": ["סינמה", "קולנוע", "הופעה", "תיאטרון", "באולינג", "OUTSIDER"]},
-    "משקאות": {"name": "משקאות", "name_en": "Beverages", "keywords": ["משקאות", "החן שב", "שיבולת הארץ", "יין", "בירה", "אקספרס"]},
-    "מזומן": {"name": "מזומן", "name_en": "Cash", "keywords": ["כספומט", "משיכה", "ATM", "מזומן", "שיק"]},
-    "הכנסה": {"name": "הכנסה", "name_en": "Income", "keywords": ["משכורת", "קצבת ילדים", "החזר", "זיכוי", "מילואים", "מופ\"ת"]},
-    "העברות_כא": {"name": "העברות כ.א", "name_en": "CC Transfers", "keywords": ["ישראכרט", "מקס איט", "כאל", "לאומי קארד"]},
-    "פיצוציות": {"name": "פיצוציות", "name_en": "Misc", "keywords": ["נאייקס", "מינימרקט", "קיוסק"]},
-    "אחר": {"name": "אחר", "name_en": "Other", "keywords": []},
+    "משכנתא": {"name": "משכנתא", "name_en": "Mortgage", "icon": "🏠", "keywords": ["משכנתא", "פועלים-משכנתא"]},
+    "ועד_בית": {"name": "ועד בית", "name_en": "HOA", "icon": "🏢", "keywords": ["ועד בית", "עזרא הסופר"]},
+    "ביטוחים": {"name": "ביטוחים", "name_en": "Insurance", "icon": "🛡️", "keywords": ["הראל", "מגדל", "כלל", "ביטוח", "פניקס", "מנורה", "קרן מכבי"]},
+    "חשמל": {"name": "חשמל", "name_en": "Electricity", "icon": "⚡", "keywords": ["חברת חשמל", "חשמל"]},
+    "מים": {"name": "מים", "name_en": "Water", "icon": "💧", "keywords": ["מי ", "מים", "מקורות"]},
+    "סופרמרקט": {"name": "סופרמרקט", "name_en": "Supermarket", "icon": "🛒", "keywords": ["רמי לוי", "שופרסל", "יוחננוף", "מגה", "ויקטורי", "סופר", "המרכולית", "קטיף עצמי", "אושר עד"]},
+    "מסעדות": {"name": "מסעדות", "name_en": "Restaurants", "icon": "🍽️", "keywords": ["מסעדה", "קפה", "פיצה", "מקדונלד", "בורגר", "שווארמה", "לחמנינה", "ארקפה", "מוניציפל", "נונומימי"]},
+    "רכב_ודלק": {"name": "רכב ודלק", "name_en": "Car & Fuel", "icon": "🚗", "keywords": ["דלק", "סונול", "פז", "דור אלון", "yellow", "רכב", "מנטה", "ten"]},
+    "ילדים": {"name": "ילדים", "name_en": "Kids", "icon": "👶", "keywords": ["צעצוע", "toys", "ילדים", "בייבי", "תמר זמיר"]},
+    "ספורט": {"name": "ספורט", "name_en": "Sports", "icon": "🏃", "keywords": ["ספורט", "כושר", "gym", "חדר כושר"]},
+    "פארמה": {"name": "פארמה", "name_en": "Pharmacy", "icon": "💊", "keywords": ["סופר פארם", "פארם", "בית מרקחת"]},
+    "תרומה": {"name": "תרומה", "name_en": "Donations", "icon": "❤️", "keywords": ["תרומה", "צדקה", "עמותה", "מפלגת המילואימניקים"]},
+    "תוכנות": {"name": "תוכנות", "name_en": "Software", "icon": "💻", "keywords": ["GOOGLE", "APPLE", "NETFLIX", "SPOTIFY", "AMAZON", "MICROSOFT", "CLAUDE"]},
+    "אטט": {"name": "א.ט.ט", "name_en": "Internet/TV/Phone", "icon": "📱", "keywords": ["בזק", "הוט", "פרטנר", "סלקום", "גולן"]},
+    "תחבורה": {"name": "תחבורה", "name_en": "Transportation", "icon": "🚌", "keywords": ["רכבת ישראל", "אגד", "דן", "מטרופולין"]},
+    "קניות": {"name": "קניות", "name_en": "Shopping", "icon": "🛍️", "keywords": ["איקאה", "זארה", "H&M", "קניון", "ביג", "עזריאלי", "סוהו"]},
+    "בילויים": {"name": "בילויים", "name_en": "Entertainment", "icon": "🎬", "keywords": ["סינמה", "קולנוע", "הופעה", "תיאטרון", "באולינג", "OUTSIDER"]},
+    "משקאות": {"name": "משקאות", "name_en": "Beverages", "icon": "🍷", "keywords": ["משקאות", "החן שב", "שיבולת הארץ", "יין", "בירה", "אקספרס"]},
+    "מזומן": {"name": "מזומן", "name_en": "Cash", "icon": "💵", "keywords": ["כספומט", "משיכה", "ATM", "מזומן", "שיק"]},
+    "הכנסה": {"name": "הכנסה", "name_en": "Income", "icon": "💰", "keywords": ["משכורת", "קצבת ילדים", "החזר", "זיכוי", "מילואים", "מופ\"ת"]},
+    "העברות_כא": {"name": "העברות כ.א", "name_en": "CC Transfers", "icon": "💳", "keywords": ["ישראכרט", "מקס איט", "כאל", "לאומי קארד"]},
+    "פיצוציות": {"name": "פיצוציות", "name_en": "Misc", "icon": "🔹", "keywords": ["נאייקס", "מינימרקט", "קיוסק"]},
+    "חד_פעמי": {"name": "חד פעמי", "name_en": "One-time", "icon": "⭐", "keywords": []},
+    "אחר": {"name": "אחר", "name_en": "Other", "icon": "❓", "keywords": []},
 }
 
-# Initialize session state
+CARD_OWNERS = ["Assaf", "Tehila"]
+
+# =============================================================================
+# Session State Initialization
+# =============================================================================
 if 'transactions' not in st.session_state:
     st.session_state.transactions = pd.DataFrame()
 if 'overrides' not in st.session_state:
     st.session_state.overrides = {}
+if 'use_demo_data' not in st.session_state:
+    st.session_state.use_demo_data = False
+if 'gsheet_connected' not in st.session_state:
+    st.session_state.gsheet_connected = False
 
+# =============================================================================
+# Helper Functions
+# =============================================================================
 
 def categorize(description: str, overrides: dict) -> str:
     """Categorize a transaction based on description."""
-    desc_lower = description.lower()
+    if pd.isna(description):
+        return "אחר"
+    desc_lower = str(description).lower()
 
     # Check overrides first
     for pattern, category in overrides.items():
@@ -70,9 +168,29 @@ def categorize(description: str, overrides: dict) -> str:
 
 def is_cc_transfer(description: str) -> bool:
     """Check if transaction is a credit card transfer."""
+    if pd.isna(description):
+        return False
     cc_keywords = ["ישראכרט", "מקס איט", "כאל", "לאומי קארד"]
-    desc_lower = description.lower()
+    desc_lower = str(description).lower()
     return any(kw.lower() in desc_lower for kw in cc_keywords)
+
+
+def detect_month(df: pd.DataFrame) -> str:
+    """Auto-detect month from transaction dates."""
+    if 'date' not in df.columns or df.empty:
+        return datetime.now().strftime("%Y-%m")
+
+    dates = pd.to_datetime(df['date'], errors='coerce')
+    valid_dates = dates.dropna()
+    if valid_dates.empty:
+        return datetime.now().strftime("%Y-%m")
+
+    # Get most common month
+    months = valid_dates.dt.to_period('M')
+    most_common = months.mode()
+    if len(most_common) > 0:
+        return str(most_common[0])
+    return datetime.now().strftime("%Y-%m")
 
 
 def parse_bank_statement(df: pd.DataFrame) -> pd.DataFrame:
@@ -86,7 +204,6 @@ def parse_bank_statement(df: pd.DataFrame) -> pd.DataFrame:
             break
 
     if header_row is None:
-        st.error("Could not find header row in bank statement")
         return pd.DataFrame()
 
     transactions = []
@@ -100,37 +217,37 @@ def parse_bank_statement(df: pd.DataFrame) -> pd.DataFrame:
         if pd.isna(date_val):
             continue
 
-        # Parse date
-        if isinstance(date_val, str):
-            try:
+        try:
+            if isinstance(date_val, str):
                 date_val = pd.to_datetime(date_val)
-            except:
-                continue
+            description = str(description) if pd.notna(description) else ""
 
-        description = str(description) if pd.notna(description) else ""
+            if pd.notna(debit) and float(debit) > 0:
+                transactions.append({
+                    'date': date_val,
+                    'description': description,
+                    'amount': -float(debit),
+                    'source': 'bank',
+                    'card_owner': 'Assaf',
+                    'is_one_time': False
+                })
 
-        # Debit (expense)
-        if pd.notna(debit) and float(debit) > 0:
-            transactions.append({
-                'date': date_val,
-                'description': description,
-                'amount': -float(debit),
-                'source': 'bank'
-            })
-
-        # Credit (income)
-        if pd.notna(credit) and float(credit) > 0:
-            transactions.append({
-                'date': date_val,
-                'description': description,
-                'amount': float(credit),
-                'source': 'bank'
-            })
+            if pd.notna(credit) and float(credit) > 0:
+                transactions.append({
+                    'date': date_val,
+                    'description': description,
+                    'amount': float(credit),
+                    'source': 'bank',
+                    'card_owner': 'Assaf',
+                    'is_one_time': False
+                })
+        except:
+            continue
 
     return pd.DataFrame(transactions)
 
 
-def parse_credit_card_statement(df: pd.DataFrame) -> pd.DataFrame:
+def parse_credit_card_statement(df: pd.DataFrame, card_owner: str = "Assaf") -> pd.DataFrame:
     """Parse credit card statement Excel file."""
     transactions = []
     in_section = False
@@ -138,7 +255,6 @@ def parse_credit_card_statement(df: pd.DataFrame) -> pd.DataFrame:
     for idx, row in df.iterrows():
         row_str = ' '.join([str(v) for v in row.values if pd.notna(v)])
 
-        # Check for transaction section header
         if 'תאריך רכישה' in row_str and 'שם בית עסק' in row_str:
             in_section = True
             continue
@@ -151,192 +267,500 @@ def parse_credit_card_statement(df: pd.DataFrame) -> pd.DataFrame:
             if pd.isna(date_val) or 'סה"כ' in str(date_val):
                 continue
 
-            # Parse date
-            if isinstance(date_val, str):
-                try:
-                    date_val = pd.to_datetime(date_val, format='%d.%m.%y')
-                except:
+            try:
+                if isinstance(date_val, str):
                     try:
-                        date_val = pd.to_datetime(date_val)
+                        date_val = pd.to_datetime(date_val, format='%d.%m.%y')
                     except:
-                        continue
+                        date_val = pd.to_datetime(date_val)
 
-            if pd.isna(business) or str(business).strip() in ['', 'טרם נקלט']:
-                continue
+                if pd.isna(business) or str(business).strip() in ['', 'טרם נקלט']:
+                    continue
 
-            if pd.notna(amount):
-                try:
+                if pd.notna(amount):
                     amount_val = float(str(amount).replace(',', '').replace('₪', ''))
                     transactions.append({
                         'date': date_val,
                         'description': str(business),
                         'amount': -abs(amount_val),
-                        'source': 'credit_card'
+                        'source': 'credit_card',
+                        'card_owner': card_owner,
+                        'is_one_time': False
                     })
-                except:
-                    pass
+            except:
+                pass
 
     return pd.DataFrame(transactions)
 
 
+def get_category_display(cat_key: str) -> str:
+    """Get display name with icon for category."""
+    cat = CATEGORIES.get(cat_key, {"name": cat_key, "icon": "❓"})
+    return f"{cat.get('icon', '')} {cat.get('name', cat_key)}"
+
+
+# =============================================================================
+# Google Sheets Functions
+# =============================================================================
+
+def load_from_gsheets():
+    """Load data from Google Sheets."""
+    try:
+        conn = st.connection("gsheets", type=GSheetsConnection)
+        df = conn.read(worksheet="Transactions", ttl=60)
+        if df is not None and not df.empty:
+            df['date'] = pd.to_datetime(df['date'])
+            df['is_one_time'] = df['is_one_time'].fillna(False).astype(bool)
+            return df
+    except Exception as e:
+        st.sidebar.warning(f"Google Sheets not connected: {e}")
+    return pd.DataFrame()
+
+
+def save_to_gsheets(df: pd.DataFrame):
+    """Save data to Google Sheets."""
+    try:
+        conn = st.connection("gsheets", type=GSheetsConnection)
+        df_to_save = df.copy()
+        df_to_save['date'] = df_to_save['date'].astype(str)
+        conn.update(worksheet="Transactions", data=df_to_save)
+        return True
+    except Exception as e:
+        st.error(f"Failed to save to Google Sheets: {e}")
+        return False
+
+
+# =============================================================================
 # Main UI
-st.title("💰 Finance Monitor")
-st.markdown("### ניטור פיננסי אישי")
+# =============================================================================
 
-# Sidebar for file upload
+# Header
+st.markdown("""
+<div style='text-align: center; padding: 20px;'>
+    <h1 style='font-size: 3rem; margin-bottom: 0;'>💰 Finance Monitor</h1>
+    <p style='color: #888; font-size: 1.2rem;'>ניטור פיננסי אישי למשפחה</p>
+</div>
+""", unsafe_allow_html=True)
+
+# =============================================================================
+# Sidebar
+# =============================================================================
+
 with st.sidebar:
-    st.header("📁 Upload Files")
+    st.markdown("## 📁 Upload Files")
 
-    bank_file = st.file_uploader("Bank Statement (תנועות בחשבון)", type=['xlsx', 'xls'])
-    cc_file = st.file_uploader("Credit Card Statement", type=['xlsx', 'xls'])
+    # Bank statement
+    bank_file = st.file_uploader(
+        "🏦 Bank Statement",
+        type=['xlsx', 'xls'],
+        help="תנועות בחשבון עו״ש"
+    )
 
-    if st.button("🔄 Process Files", type="primary"):
+    # Credit card files with owner selection
+    st.markdown("### 💳 Credit Cards")
+
+    cc_files = st.file_uploader(
+        "Credit Card Statements",
+        type=['xlsx', 'xls'],
+        accept_multiple_files=True,
+        help="Upload one or more credit card statements"
+    )
+
+    # Owner selection for each file
+    cc_owners = {}
+    if cc_files:
+        st.markdown("**Assign card owners:**")
+        for i, f in enumerate(cc_files):
+            cc_owners[f.name] = st.selectbox(
+                f"{f.name[:20]}...",
+                CARD_OWNERS,
+                key=f"owner_{i}"
+            )
+
+    # Process button
+    if st.button("🚀 Process Files", type="primary", use_container_width=True):
         all_transactions = []
 
         if bank_file:
-            with st.spinner("Processing bank statement..."):
+            with st.spinner("Processing bank..."):
                 bank_df = pd.read_excel(bank_file)
                 bank_trans = parse_bank_statement(bank_df)
                 if not bank_trans.empty:
                     all_transactions.append(bank_trans)
                     st.success(f"✓ Bank: {len(bank_trans)} transactions")
 
-        if cc_file:
-            with st.spinner("Processing credit card..."):
+        for cc_file in cc_files:
+            with st.spinner(f"Processing {cc_file.name}..."):
                 cc_df = pd.read_excel(cc_file)
-                cc_trans = parse_credit_card_statement(cc_df)
+                owner = cc_owners.get(cc_file.name, "Assaf")
+                cc_trans = parse_credit_card_statement(cc_df, owner)
                 if not cc_trans.empty:
                     all_transactions.append(cc_trans)
-                    st.success(f"✓ Credit Card: {len(cc_trans)} transactions")
+                    st.success(f"✓ {owner}'s card: {len(cc_trans)} transactions")
 
         if all_transactions:
-            st.session_state.transactions = pd.concat(all_transactions, ignore_index=True)
+            new_df = pd.concat(all_transactions, ignore_index=True)
+
             # Categorize
-            st.session_state.transactions['category'] = st.session_state.transactions['description'].apply(
+            new_df['category'] = new_df['description'].apply(
                 lambda x: categorize(x, st.session_state.overrides)
             )
-            st.session_state.transactions['is_cc_transfer'] = st.session_state.transactions.apply(
-                lambda x: x['source'] == 'bank' and is_cc_transfer(x['description']), axis=1
+            new_df['is_cc_transfer'] = new_df.apply(
+                lambda x: x['source'] == 'bank' and is_cc_transfer(x['description']),
+                axis=1
             )
-            st.success(f"✅ Total: {len(st.session_state.transactions)} transactions loaded!")
 
-# Main content
-if not st.session_state.transactions.empty:
-    df = st.session_state.transactions.copy()
+            # Detect month
+            month = detect_month(new_df)
+            new_df['month'] = month
 
-    # Check if we have both sources
-    has_both = len(df['source'].unique()) > 1
+            # Merge with existing data
+            if not st.session_state.transactions.empty:
+                st.session_state.transactions = pd.concat(
+                    [st.session_state.transactions, new_df],
+                    ignore_index=True
+                ).drop_duplicates(subset=['date', 'description', 'amount'])
+            else:
+                st.session_state.transactions = new_df
 
-    # Filter out CC transfers if we have both
-    if has_both:
-        df_expenses = df[~df['is_cc_transfer']]
-        excluded = df[df['is_cc_transfer']]
-    else:
-        df_expenses = df
-        excluded = pd.DataFrame()
-
-    # Calculate totals
-    income = df_expenses[df_expenses['amount'] > 0]['amount'].sum()
-    expenses = abs(df_expenses[df_expenses['amount'] < 0]['amount'].sum())
-    balance = income - expenses
-
-    # Summary cards
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        st.metric("💵 הכנסות / Income", f"₪{income:,.0f}")
-    with col2:
-        st.metric("💸 הוצאות / Expenses", f"₪{expenses:,.0f}")
-    with col3:
-        st.metric("📊 מאזן / Balance", f"₪{balance:,.0f}", delta=f"₪{balance:,.0f}")
-
-    # Show excluded transfers
-    if not excluded.empty:
-        with st.expander(f"ℹ️ Excluded {len(excluded)} CC transfers (₪{abs(excluded['amount'].sum()):,.0f})"):
-            st.dataframe(excluded[['date', 'description', 'amount']])
+            st.success(f"✅ Loaded {len(new_df)} transactions for {month}")
 
     st.markdown("---")
 
+    # Google Sheets connection info
+    st.markdown("### ☁️ Cloud Storage")
+    st.info("Connect Google Sheets in Streamlit settings to save data permanently.")
+
+# =============================================================================
+# Main Content
+# =============================================================================
+
+if st.session_state.transactions.empty:
+    # Welcome screen
+    st.markdown("""
+    <div style='text-align: center; padding: 50px; background: rgba(15, 52, 96, 0.5); border-radius: 20px; margin: 20px;'>
+        <h2>👋 Welcome!</h2>
+        <p style='font-size: 1.2rem; color: #888;'>Upload your bank and credit card files to get started.</p>
+        <br>
+        <div style='display: flex; justify-content: center; gap: 30px; flex-wrap: wrap;'>
+            <div style='text-align: center;'>
+                <span style='font-size: 3rem;'>📊</span>
+                <p>Track Spending</p>
+            </div>
+            <div style='text-align: center;'>
+                <span style='font-size: 3rem;'>📈</span>
+                <p>See Trends</p>
+            </div>
+            <div style='text-align: center;'>
+                <span style='font-size: 3rem;'>💳</span>
+                <p>Multiple Cards</p>
+            </div>
+            <div style='text-align: center;'>
+                <span style='font-size: 3rem;'>⚙️</span>
+                <p>Customize</p>
+            </div>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+else:
+    df = st.session_state.transactions.copy()
+
+    # Month selector
+    available_months = sorted(df['month'].unique(), reverse=True)
+
+    col1, col2, col3 = st.columns([2, 1, 1])
+    with col1:
+        selected_month = st.selectbox(
+            "📅 Select Month",
+            available_months,
+            index=0
+        )
+    with col2:
+        show_all_months = st.checkbox("Show all months", value=False)
+    with col3:
+        include_one_time = st.checkbox("Include one-time", value=False)
+
+    # Filter data
+    if show_all_months:
+        df_filtered = df.copy()
+    else:
+        df_filtered = df[df['month'] == selected_month].copy()
+
+    # Exclude CC transfers and optionally one-time expenses
+    has_both = len(df_filtered['source'].unique()) > 1
+    df_display = df_filtered[~df_filtered['is_cc_transfer']].copy()
+
+    if not include_one_time:
+        df_regular = df_display[~df_display['is_one_time']]
+        df_one_time = df_display[df_display['is_one_time']]
+    else:
+        df_regular = df_display
+        df_one_time = pd.DataFrame()
+
+    # =============================================================================
+    # Summary Cards
+    # =============================================================================
+
+    income = df_regular[df_regular['amount'] > 0]['amount'].sum()
+    expenses = abs(df_regular[df_regular['amount'] < 0]['amount'].sum())
+    balance = income - expenses
+
+    col1, col2, col3, col4 = st.columns(4)
+
+    with col1:
+        st.metric(
+            "💵 Income",
+            f"₪{income:,.0f}",
+            help="Total income"
+        )
+
+    with col2:
+        st.metric(
+            "💸 Expenses",
+            f"₪{expenses:,.0f}",
+            help="Total expenses (excluding one-time)"
+        )
+
+    with col3:
+        delta_color = "normal" if balance >= 0 else "inverse"
+        st.metric(
+            "📊 Balance",
+            f"₪{balance:,.0f}",
+            delta=f"₪{balance:,.0f}",
+            delta_color=delta_color
+        )
+
+    with col4:
+        one_time_total = abs(df_one_time[df_one_time['amount'] < 0]['amount'].sum()) if not df_one_time.empty else 0
+        st.metric(
+            "⭐ One-time",
+            f"₪{one_time_total:,.0f}",
+            help="Excluded special expenses"
+        )
+
+    st.markdown("---")
+
+    # =============================================================================
     # Tabs
-    tab1, tab2, tab3 = st.tabs(["📊 Categories", "📋 Transactions", "⚙️ Overrides"])
+    # =============================================================================
 
+    tab1, tab2, tab3, tab4, tab5 = st.tabs([
+        "📊 Categories",
+        "📈 Trends",
+        "📋 Transactions",
+        "⭐ One-time",
+        "⚙️ Settings"
+    ])
+
+    # -------------------------------------------------------------------------
+    # Tab 1: Categories
+    # -------------------------------------------------------------------------
     with tab1:
-        st.subheader("הוצאות לפי קטגוריה / Expenses by Category")
-
-        # Calculate by category (expenses only, excluding CC transfers)
-        expense_df = df_expenses[df_expenses['amount'] < 0].copy()
+        expense_df = df_regular[df_regular['amount'] < 0].copy()
         expense_df['amount'] = expense_df['amount'].abs()
 
-        category_totals = expense_df.groupby('category')['amount'].sum().sort_values(ascending=False)
+        if not expense_df.empty:
+            category_totals = expense_df.groupby('category')['amount'].sum().sort_values(ascending=True)
 
-        # Create summary table
-        summary_data = []
-        for cat, amount in category_totals.items():
-            cat_info = CATEGORIES.get(cat, {"name": cat, "name_en": ""})
-            pct = (amount / expenses * 100) if expenses > 0 else 0
-            summary_data.append({
-                "קטגוריה": cat_info.get("name", cat),
-                "Category": cat_info.get("name_en", ""),
-                "סכום": f"₪{amount:,.0f}",
-                "אחוז": f"{pct:.1f}%"
-            })
+            # Pie chart
+            col1, col2 = st.columns([1, 1])
 
-        summary_df = pd.DataFrame(summary_data)
-        st.dataframe(summary_df, use_container_width=True, hide_index=True)
+            with col1:
+                fig = px.pie(
+                    values=category_totals.values,
+                    names=[get_category_display(c) for c in category_totals.index],
+                    title="Spending by Category",
+                    hole=0.4,
+                    color_discrete_sequence=px.colors.qualitative.Set3
+                )
+                fig.update_layout(
+                    paper_bgcolor='rgba(0,0,0,0)',
+                    plot_bgcolor='rgba(0,0,0,0)',
+                    font_color='white'
+                )
+                st.plotly_chart(fig, use_container_width=True)
 
-        # Bar chart
-        st.bar_chart(category_totals)
+            with col2:
+                fig = px.bar(
+                    x=category_totals.values,
+                    y=[get_category_display(c) for c in category_totals.index],
+                    orientation='h',
+                    title="Spending Breakdown",
+                    color=category_totals.values,
+                    color_continuous_scale='Reds'
+                )
+                fig.update_layout(
+                    paper_bgcolor='rgba(0,0,0,0)',
+                    plot_bgcolor='rgba(0,0,0,0)',
+                    font_color='white',
+                    showlegend=False
+                )
+                st.plotly_chart(fig, use_container_width=True)
 
+            # Summary table
+            st.markdown("### 📋 Category Summary")
+            summary_data = []
+            for cat in category_totals.index[::-1]:
+                amount = category_totals[cat]
+                pct = (amount / expenses * 100) if expenses > 0 else 0
+                cat_info = CATEGORIES.get(cat, {"icon": "❓", "name": cat, "name_en": ""})
+                summary_data.append({
+                    "": cat_info.get("icon", "❓"),
+                    "קטגוריה": cat_info.get("name", cat),
+                    "Category": cat_info.get("name_en", ""),
+                    "Amount": f"₪{amount:,.0f}",
+                    "Percent": f"{pct:.1f}%"
+                })
+
+            st.dataframe(
+                pd.DataFrame(summary_data),
+                use_container_width=True,
+                hide_index=True
+            )
+
+    # -------------------------------------------------------------------------
+    # Tab 2: Trends
+    # -------------------------------------------------------------------------
     with tab2:
-        st.subheader("כל התנועות / All Transactions")
+        if len(available_months) > 1:
+            # Monthly totals
+            monthly_data = df[~df['is_cc_transfer'] & ~df['is_one_time']].copy()
+            monthly_summary = monthly_data.groupby('month').agg({
+                'amount': lambda x: (x[x > 0].sum(), abs(x[x < 0].sum()))
+            }).reset_index()
 
-        # Filter options
-        col1, col2 = st.columns(2)
+            monthly_summary['income'] = monthly_summary['amount'].apply(lambda x: x[0])
+            monthly_summary['expenses'] = monthly_summary['amount'].apply(lambda x: x[1])
+            monthly_summary['balance'] = monthly_summary['income'] - monthly_summary['expenses']
+
+            # Trend chart
+            fig = go.Figure()
+            fig.add_trace(go.Bar(name='Income', x=monthly_summary['month'], y=monthly_summary['income'], marker_color='#00d9ff'))
+            fig.add_trace(go.Bar(name='Expenses', x=monthly_summary['month'], y=monthly_summary['expenses'], marker_color='#e94560'))
+            fig.add_trace(go.Scatter(name='Balance', x=monthly_summary['month'], y=monthly_summary['balance'], mode='lines+markers', line=dict(color='#ffd700', width=3)))
+
+            fig.update_layout(
+                title="Monthly Trend",
+                barmode='group',
+                paper_bgcolor='rgba(0,0,0,0)',
+                plot_bgcolor='rgba(0,0,0,0)',
+                font_color='white'
+            )
+            st.plotly_chart(fig, use_container_width=True)
+
+            # Category trends
+            st.markdown("### Category Trends Over Time")
+            cat_monthly = monthly_data[monthly_data['amount'] < 0].groupby(['month', 'category'])['amount'].sum().abs().reset_index()
+
+            if not cat_monthly.empty:
+                fig = px.line(
+                    cat_monthly,
+                    x='month',
+                    y='amount',
+                    color='category',
+                    title="Spending by Category Over Time"
+                )
+                fig.update_layout(
+                    paper_bgcolor='rgba(0,0,0,0)',
+                    plot_bgcolor='rgba(0,0,0,0)',
+                    font_color='white'
+                )
+                st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.info("📊 Upload more months to see trends!")
+
+    # -------------------------------------------------------------------------
+    # Tab 3: Transactions
+    # -------------------------------------------------------------------------
+    with tab3:
+        st.markdown("### All Transactions")
+
+        # Filters
+        col1, col2, col3 = st.columns(3)
         with col1:
-            category_filter = st.selectbox("Filter by category", ["All"] + list(df['category'].unique()))
+            cat_filter = st.selectbox("Category", ["All"] + list(df_display['category'].unique()))
         with col2:
-            source_filter = st.selectbox("Filter by source", ["All", "bank", "credit_card"])
+            owner_filter = st.selectbox("Card Owner", ["All"] + CARD_OWNERS)
+        with col3:
+            source_filter = st.selectbox("Source", ["All", "bank", "credit_card"])
 
-        display_df = df_expenses.copy()
-        if category_filter != "All":
-            display_df = display_df[display_df['category'] == category_filter]
+        # Apply filters
+        display_df = df_display.copy()
+        if cat_filter != "All":
+            display_df = display_df[display_df['category'] == cat_filter]
+        if owner_filter != "All":
+            display_df = display_df[display_df['card_owner'] == owner_filter]
         if source_filter != "All":
             display_df = display_df[display_df['source'] == source_filter]
 
-        # Format for display
         display_df = display_df.sort_values('date', ascending=False)
-        display_df['amount_display'] = display_df['amount'].apply(lambda x: f"₪{x:,.2f}")
-        display_df['date_display'] = display_df['date'].dt.strftime('%Y-%m-%d')
 
-        st.dataframe(
-            display_df[['date_display', 'description', 'amount_display', 'category', 'source']].rename(columns={
-                'date_display': 'תאריך',
-                'description': 'תיאור',
-                'amount_display': 'סכום',
-                'category': 'קטגוריה',
-                'source': 'מקור'
-            }),
-            use_container_width=True,
-            hide_index=True
-        )
+        # Editable table
+        st.markdown("**Click on a row to edit category or mark as one-time:**")
 
-    with tab3:
-        st.subheader("⚙️ Fix Categorization")
-        st.markdown("Add rules to fix miscategorized transactions")
+        for idx, row in display_df.head(50).iterrows():
+            col1, col2, col3, col4, col5 = st.columns([1, 3, 1.5, 1.5, 1])
 
-        # Show uncategorized
-        uncategorized = df_expenses[df_expenses['category'] == 'אחר']
-        if not uncategorized.empty:
-            st.warning(f"⚠️ {len(uncategorized)} uncategorized transactions:")
-            for _, row in uncategorized.iterrows():
-                st.text(f"  • {row['description']}: ₪{abs(row['amount']):,.0f}")
+            with col1:
+                st.text(row['date'].strftime('%d/%m') if pd.notna(row['date']) else '')
+            with col2:
+                st.text(row['description'][:35] if len(str(row['description'])) > 35 else row['description'])
+            with col3:
+                st.text(f"₪{row['amount']:,.0f}")
+            with col4:
+                new_cat = st.selectbox(
+                    "Cat",
+                    list(CATEGORIES.keys()),
+                    index=list(CATEGORIES.keys()).index(row['category']) if row['category'] in CATEGORIES else 0,
+                    key=f"cat_{idx}",
+                    label_visibility="collapsed"
+                )
+                if new_cat != row['category']:
+                    st.session_state.transactions.loc[idx, 'category'] = new_cat
+            with col5:
+                is_onetime = st.checkbox(
+                    "⭐",
+                    value=row['is_one_time'],
+                    key=f"onetime_{idx}",
+                    help="Mark as one-time expense"
+                )
+                if is_onetime != row['is_one_time']:
+                    st.session_state.transactions.loc[idx, 'is_one_time'] = is_onetime
 
-        # Add override form
-        st.markdown("### Add Override")
+    # -------------------------------------------------------------------------
+    # Tab 4: One-time Expenses
+    # -------------------------------------------------------------------------
+    with tab4:
+        st.markdown("### ⭐ One-time / Special Expenses")
+        st.markdown("These are excluded from monthly averages but tracked separately.")
+
+        all_one_time = df[df['is_one_time'] == True].copy()
+
+        if not all_one_time.empty:
+            total_one_time = abs(all_one_time[all_one_time['amount'] < 0]['amount'].sum())
+            st.metric("Total One-time Expenses (All Time)", f"₪{total_one_time:,.0f}")
+
+            st.dataframe(
+                all_one_time[['date', 'description', 'amount', 'category', 'card_owner']].sort_values('date', ascending=False),
+                use_container_width=True,
+                hide_index=True
+            )
+        else:
+            st.info("No one-time expenses marked yet. Go to Transactions tab and click ⭐ to mark items.")
+
+    # -------------------------------------------------------------------------
+    # Tab 5: Settings
+    # -------------------------------------------------------------------------
+    with tab5:
+        st.markdown("### ⚙️ Category Overrides")
+        st.markdown("Add rules to auto-categorize transactions.")
+
         col1, col2 = st.columns(2)
         with col1:
             pattern = st.text_input("Description pattern", placeholder="e.g., תמר זמיר")
         with col2:
-            category = st.selectbox("Category", list(CATEGORIES.keys()))
+            category = st.selectbox("Assign to category", list(CATEGORIES.keys()))
 
         if st.button("➕ Add Override"):
             if pattern:
@@ -356,25 +780,16 @@ if not st.session_state.transactions.empty:
                 with col1:
                     st.text(pattern)
                 with col2:
-                    st.text(CATEGORIES[cat]['name'])
+                    st.text(get_category_display(cat))
                 with col3:
                     if st.button("🗑️", key=f"del_{pattern}"):
                         del st.session_state.overrides[pattern]
                         st.rerun()
 
-else:
-    # Welcome screen
-    st.info("👈 Upload your bank and credit card files in the sidebar to get started!")
+        st.markdown("---")
+        st.markdown("### 🗑️ Data Management")
 
-    st.markdown("""
-    ### How to use:
-    1. **Upload** your bank statement (תנועות בחשבון עו״ש.xls)
-    2. **Upload** your credit card statement (e.g., 0429_02_2026.xlsx)
-    3. Click **Process Files**
-    4. View your spending breakdown!
-
-    ### Features:
-    - 📊 Automatic categorization
-    - 🔄 Excludes double-counted CC transfers
-    - ⚙️ Fix miscategorized transactions with overrides
-    """)
+        if st.button("Clear All Data", type="secondary"):
+            st.session_state.transactions = pd.DataFrame()
+            st.session_state.overrides = {}
+            st.rerun()
