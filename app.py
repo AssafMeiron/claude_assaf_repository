@@ -303,18 +303,37 @@ def get_category_display(cat_key: str) -> str:
 # Google Sheets Functions
 # =============================================================================
 
+def check_gsheets_connection():
+    """Check if Google Sheets is configured and accessible."""
+    try:
+        conn = st.connection("gsheets", type=GSheetsConnection)
+        # Try to read - this will fail if not configured
+        df = conn.read(worksheet="Transactions", ttl=5)
+        return True, "Connected"
+    except Exception as e:
+        error_msg = str(e)
+        if "secrets" in error_msg.lower():
+            return False, "Not configured"
+        return False, f"Error: {error_msg[:50]}"
+
+
 def load_from_gsheets():
     """Load data from Google Sheets."""
     try:
         conn = st.connection("gsheets", type=GSheetsConnection)
         df = conn.read(worksheet="Transactions", ttl=60)
         if df is not None and not df.empty:
-            df['date'] = pd.to_datetime(df['date'])
-            df['is_one_time'] = df['is_one_time'].fillna(False).astype(bool)
-            return df
+            # Handle column types
+            if 'date' in df.columns:
+                df['date'] = pd.to_datetime(df['date'], errors='coerce')
+            if 'is_one_time' in df.columns:
+                df['is_one_time'] = df['is_one_time'].fillna(False).astype(bool)
+            if 'is_cc_transfer' in df.columns:
+                df['is_cc_transfer'] = df['is_cc_transfer'].fillna(False).astype(bool)
+            return df, None
+        return pd.DataFrame(), None
     except Exception as e:
-        st.sidebar.warning(f"Google Sheets not connected: {e}")
-    return pd.DataFrame()
+        return pd.DataFrame(), str(e)
 
 
 def save_to_gsheets(df: pd.DataFrame):
@@ -322,12 +341,32 @@ def save_to_gsheets(df: pd.DataFrame):
     try:
         conn = st.connection("gsheets", type=GSheetsConnection)
         df_to_save = df.copy()
-        df_to_save['date'] = df_to_save['date'].astype(str)
+        # Convert date to string for storage
+        if 'date' in df_to_save.columns:
+            df_to_save['date'] = df_to_save['date'].astype(str)
         conn.update(worksheet="Transactions", data=df_to_save)
-        return True
+        return True, None
     except Exception as e:
-        st.error(f"Failed to save to Google Sheets: {e}")
-        return False
+        return False, str(e)
+
+
+# Try to load from Google Sheets on startup
+if 'gsheets_checked' not in st.session_state:
+    st.session_state.gsheets_checked = False
+    st.session_state.gsheets_connected = False
+    st.session_state.gsheets_error = None
+
+if not st.session_state.gsheets_checked:
+    connected, msg = check_gsheets_connection()
+    st.session_state.gsheets_connected = connected
+    st.session_state.gsheets_error = None if connected else msg
+    st.session_state.gsheets_checked = True
+
+    # If connected and no local data, try to load from sheets
+    if connected and st.session_state.transactions.empty:
+        loaded_df, error = load_from_gsheets()
+        if not loaded_df.empty:
+            st.session_state.transactions = loaded_df
 
 
 # =============================================================================
@@ -427,9 +466,38 @@ with st.sidebar:
 
     st.markdown("---")
 
-    # Google Sheets connection info
+    # Google Sheets connection status and controls
     st.markdown("### ☁️ Cloud Storage")
-    st.info("Connect Google Sheets in Streamlit settings to save data permanently.")
+
+    if st.session_state.gsheets_connected:
+        st.success("✅ Google Sheets connected!")
+
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("💾 Save", use_container_width=True):
+                if not st.session_state.transactions.empty:
+                    success, error = save_to_gsheets(st.session_state.transactions)
+                    if success:
+                        st.success("Saved!")
+                    else:
+                        st.error(f"Save failed: {error}")
+                else:
+                    st.warning("No data to save")
+
+        with col2:
+            if st.button("📥 Load", use_container_width=True):
+                loaded_df, error = load_from_gsheets()
+                if not loaded_df.empty:
+                    st.session_state.transactions = loaded_df
+                    st.success(f"Loaded {len(loaded_df)} transactions!")
+                    st.rerun()
+                elif error:
+                    st.error(f"Load failed: {error}")
+                else:
+                    st.info("No data in Google Sheets yet")
+    else:
+        st.warning(f"⚠️ {st.session_state.gsheets_error or 'Not connected'}")
+        st.caption("Check Streamlit secrets configuration")
 
 # =============================================================================
 # Main Content
